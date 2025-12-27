@@ -2,6 +2,8 @@
 
 File: [comedian-mon/comedy-rpg.html](comedian-mon/comedy-rpg.html)
 
+This game is entirely created in Javascript using Phaser. 
+
 Quick start
 - Open the file in a modern browser (double-click the HTML file) or serve the folder and open http://localhost:8000/comedy-rpg.html.
 - To serve locally: run `python -m http.server 8000` in the repository root and open the URL.
