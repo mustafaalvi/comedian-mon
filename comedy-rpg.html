@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comedian Quest</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #2c3e50;
+            font-family: 'Press Start 2P', cursive;
+        }
+        #game-container {
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    
+    <script>
+        // Game configuration
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game-container',
+            backgroundColor: '#1a1a1a',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 },
+                    debug: false
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+        
+        let player;
+        let cursors;
+        let encounterZones;
+        let lastEncounterTime = 0;
+        let isInBattle = false;
+        let battleUI;
+        let currentBoss;
+        let bossHP;
+        let playerHP = 100;
+        let defeatedBosses = [];
+
+        const BOSSES = {
+            Jerry: { 
+                name: 'Jerry the Observational', 
+                hp: 50, 
+                sprite: '🎤',
+                jokes: [
+                    "What's the DEAL with your outfit?",
+                    "I've seen better timing from a broken clock!",
+                    "Did you just wing it like your haircut?"
+                ]
+            },
+            Sarah: { 
+                name: 'Sarah the Savage', 
+                hp: 60, 
+                sprite: '🔥',
+                jokes: [
+                    "Nature already roasted you.",
+                    "Your best joke is thinking you'd win.",
+                    "I've seen scarier things in my rearview mirror."
+                ]
+            },
+            Mike: { 
+                name: 'Mike the Physical', 
+                hp: 45, 
+                sprite: '🤡',
+                jokes: [
+                    "falls off stage - That's YOU in this battle!",
+                    "pulls out rubber chicken - Your career prospects!",
+                    "trips dramatically - Your confidence level!"
+                ]
+            }
+        };
+
+        function preload() {
+            // In a real game, you'd load sprite sheets here
+            // For demo purposes, we'll create simple graphics
+        }
+
+        function create() {
+            // Create tile-based world
+            const tileSize = 32;
+            const worldWidth = 25;
+            const worldHeight = 20;
+            
+            // Draw grass tiles
+            const graphics = this.add.graphics();
+            for (let y = 0; y < worldHeight; y++) {
+                for (let x = 0; x < worldWidth; x++) {
+                    const color = (x + y) % 2 === 0 ? 0x2ecc71 : 0x27ae60;
+                    graphics.fillStyle(color, 1);
+                    graphics.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                }
+            }
+
+            // Create paths (lighter color)
+            graphics.fillStyle(0xd4a574, 1);
+            // Horizontal path
+            for (let x = 0; x < worldWidth; x++) {
+                graphics.fillRect(x * tileSize, 9 * tileSize, tileSize, tileSize * 2);
+            }
+            // Vertical path
+            for (let y = 0; y < worldHeight; y++) {
+                graphics.fillRect(12 * tileSize, y * tileSize, tileSize * 2, tileSize);
+            }
+
+            // Create encounter zones (tall grass)
+            encounterZones = this.physics.add.staticGroup();
+            
+            // Zone 1 - Top left
+            createEncounterZone(this, 2, 2, 5, 5, 'Jerry');
+            // Zone 2 - Top right  
+            createEncounterZone(this, 18, 2, 5, 5, 'Sarah');
+            // Zone 3 - Bottom
+            createEncounterZone(this, 8, 15, 8, 3, 'Mike');
+
+            // Create buildings/locations
+            createBuilding(this, 12, 4, 2, 2, 0x8b4513, '🏠');
+            createBuilding(this, 5, 12, 3, 2, 0xe74c3c, '🎭');
+            createBuilding(this, 18, 14, 2, 2, 0x3498db, '🏪');
+
+            // Create player sprite
+            const playerGraphics = this.add.graphics();
+            playerGraphics.fillStyle(0xffeb3b, 1);
+            playerGraphics.fillCircle(8, 8, 8);
+            playerGraphics.fillStyle(0x000000, 1);
+            playerGraphics.fillCircle(5, 6, 2);
+            playerGraphics.fillCircle(11, 6, 2);
+            playerGraphics.fillStyle(0xff0000, 1);
+            playerGraphics.fillRect(6, 11, 4, 1);
+            playerGraphics.generateTexture('player', 16, 16);
+            playerGraphics.destroy();
+
+            player = this.physics.add.sprite(400, 300, 'player');
+            player.setCollideWorldBounds(true);
+
+            // Camera follows player
+            this.cameras.main.setBounds(0, 0, worldWidth * tileSize, worldHeight * tileSize);
+            this.cameras.main.startFollow(player);
+
+            // Input
+            cursors = this.input.keyboard.createCursorKeys();
+
+            // UI
+            createUI(this);
+
+            // Instructions
+            const instructions = this.add.text(10, 10, 
+                'Arrow Keys: Move\nEnter tall grass to battle comedians!', 
+                { 
+                    fontSize: '12px', 
+                    fill: '#fff',
+                    backgroundColor: '#000',
+                    padding: { x: 10, y: 5 }
+                }
+            ).setScrollFactor(0).setDepth(100);
+
+            setTimeout(() => instructions.destroy(), 5000);
+        }
+
+        function createEncounterZone(scene, x, y, width, height, boss) {
+            const tileSize = 32;
+            const zone = scene.add.graphics();
+            zone.fillStyle(0x1e7a1e, 1);
+            
+            // Create tall grass effect
+            for (let gy = 0; gy < height; gy++) {
+                for (let gx = 0; gx < width; gx++) {
+                    const px = (x + gx) * tileSize;
+                    const py = (y + gy) * tileSize;
+                    zone.fillRect(px, py, tileSize, tileSize);
+                    
+                    // Add grass texture
+                    zone.fillStyle(0x145214, 1);
+                    zone.fillRect(px + 5, py + 10, 4, 12);
+                    zone.fillRect(px + 15, py + 8, 4, 14);
+                    zone.fillRect(px + 23, py + 12, 4, 10);
+                    zone.fillStyle(0x1e7a1e, 1);
+                }
+            }
+
+            const zoneBody = scene.add.rectangle(
+                (x + width/2) * tileSize, 
+                (y + height/2) * tileSize,
+                width * tileSize,
+                height * tileSize
+            );
+            scene.physics.add.existing(zoneBody, true);
+            zoneBody.setData('boss', boss);
+            encounterZones.add(zoneBody);
+        }
+
+        function createBuilding(scene, x, y, width, height, color, emoji) {
+            const tileSize = 32;
+            const building = scene.add.graphics();
+            building.fillStyle(color, 1);
+            building.fillRect(x * tileSize, y * tileSize, width * tileSize, height * tileSize);
+            building.lineStyle(3, 0x000000, 1);
+            building.strokeRect(x * tileSize, y * tileSize, width * tileSize, height * tileSize);
+            
+            scene.add.text(
+                (x + width/2) * tileSize, 
+                (y + height/2) * tileSize, 
+                emoji, 
+                { fontSize: '24px' }
+            ).setOrigin(0.5);
+        }
+
+        function createUI(scene) {
+            // HP bar
+            const hpBar = scene.add.graphics();
+            hpBar.fillStyle(0x000000, 0.7);
+            hpBar.fillRect(10, 550, 200, 40);
+            hpBar.lineStyle(2, 0xffffff, 1);
+            hpBar.strokeRect(10, 550, 200, 40);
+            hpBar.setScrollFactor(0).setDepth(100);
+
+            const hpText = scene.add.text(20, 560, `HP: ${playerHP}/100`, {
+                fontSize: '16px',
+                fill: '#fff'
+            }).setScrollFactor(0).setDepth(101);
+
+            scene.events.on('updateHP', () => {
+                hpText.setText(`HP: ${playerHP}/100`);
+            });
+
+            // Defeated counter
+            const defeatText = scene.add.text(600, 560, `Defeated: ${defeatedBosses.length}/3`, {
+                fontSize: '14px',
+                fill: '#fff',
+                backgroundColor: '#000',
+                padding: { x: 10, y: 5 }
+            }).setScrollFactor(0).setDepth(101);
+
+            scene.events.on('updateDefeated', () => {
+                defeatText.setText(`Defeated: ${defeatedBosses.length}/3`);
+            });
+        }
+
+        function update() {
+            if (isInBattle) return;
+
+            // Player movement
+            const speed = 160;
+            player.setVelocity(0);
+
+            if (cursors.left.isDown) {
+                player.setVelocityX(-speed);
+            } else if (cursors.right.isDown) {
+                player.setVelocityX(speed);
+            }
+
+            if (cursors.up.isDown) {
+                player.setVelocityY(-speed);
+            } else if (cursors.down.isDown) {
+                player.setVelocityY(speed);
+            }
+
+            // Check for encounters
+            const time = Date.now();
+            if (time - lastEncounterTime > 3000) { // 3 second cooldown
+                encounterZones.children.entries.forEach(zone => {
+                    if (Phaser.Geom.Rectangle.Contains(zone.getBounds(), player.x, player.y)) {
+                        const boss = zone.getData('boss');
+                        if (!defeatedBosses.includes(boss) && Math.random() < 0.3) {
+                            startBattle(this, boss);
+                            lastEncounterTime = time;
+                        }
+                    }
+                });
+            }
+        }
+
+        function startBattle(scene, bossKey) {
+            isInBattle = true;
+            currentBoss = BOSSES[bossKey];
+            bossHP = currentBoss.hp;
+
+            // Create battle UI
+            battleUI = scene.add.container(400, 300).setScrollFactor(0).setDepth(200);
+
+            const bg = scene.add.graphics();
+            bg.fillStyle(0x000000, 0.9);
+            bg.fillRect(-350, -250, 700, 500);
+            battleUI.add(bg);
+
+            const bossText = scene.add.text(0, -150, `${currentBoss.name} appears!`, {
+                fontSize: '24px',
+                fill: '#fff'
+            }).setOrigin(0.5);
+            battleUI.add(bossText);
+
+            const bossSprite = scene.add.text(0, -50, currentBoss.sprite, {
+                fontSize: '80px'
+            }).setOrigin(0.5);
+            battleUI.add(bossSprite);
+
+            const bossHPText = scene.add.text(0, 50, `HP: ${bossHP}/${currentBoss.hp}`, {
+                fontSize: '18px',
+                fill: '#f00'
+            }).setOrigin(0.5);
+            battleUI.add(bossHPText);
+
+            const messageText = scene.add.text(0, 100, 'Choose your move!', {
+                fontSize: '14px',
+                fill: '#fff',
+                wordWrap: { width: 600 }
+            }).setOrigin(0.5);
+            battleUI.add(messageText);
+
+            // Battle buttons
+            const buttons = [
+                { text: '🔥 Roast', x: -200, damage: 15, color: 0xe74c3c },
+                { text: '🔄 Callback', x: 0, damage: 20, color: 0x9b59b6 },
+                { text: '👥 Crowd Work', x: 200, damage: 12, color: 0x3498db }
+            ];
+
+            buttons.forEach(btn => {
+                const button = scene.add.graphics();
+                button.fillStyle(btn.color, 1);
+                button.fillRect(btn.x - 80, 150, 160, 50);
+                button.lineStyle(3, 0xffffff, 1);
+                button.strokeRect(btn.x - 80, 150, 160, 50);
+                button.setInteractive(
+                    new Phaser.Geom.Rectangle(btn.x - 80, 150, 160, 50),
+                    Phaser.Geom.Rectangle.Contains
+                );
+                
+                const btnText = scene.add.text(btn.x, 175, btn.text, {
+                    fontSize: '14px',
+                    fill: '#fff'
+                }).setOrigin(0.5);
+
+                button.on('pointerdown', () => {
+                    playerAttack(scene, btn.damage, messageText, bossHPText, bossKey);
+                });
+
+                battleUI.add(button);
+                battleUI.add(btnText);
+            });
+        }
+
+        function playerAttack(scene, damage, messageText, bossHPText, bossKey) {
+            bossHP -= damage;
+            bossHPText.setText(`HP: ${Math.max(0, bossHP)}/${currentBoss.hp}`);
+            messageText.setText(`You dealt ${damage} damage!`);
+
+            if (bossHP <= 0) {
+                setTimeout(() => {
+                    messageText.setText(`${currentBoss.name} is defeated!\n\nPress any key to continue...`);
+                    defeatedBosses.push(bossKey);
+                    scene.events.emit('updateDefeated');
+                    
+                    scene.input.keyboard.once('keydown', () => {
+                        battleUI.destroy();
+                        isInBattle = false;
+                    });
+                }, 1000);
+                return;
+            }
+
+            // Boss counter-attack
+            setTimeout(() => {
+                const joke = currentBoss.jokes[Math.floor(Math.random() * currentBoss.jokes.length)];
+                const bossDamage = Math.floor(Math.random() * 10) + 8;
+                playerHP = Math.max(0, playerHP - bossDamage);
+                
+                messageText.setText(`${currentBoss.name}:\n"${joke}"\n\nYou took ${bossDamage} damage!`);
+                scene.events.emit('updateHP');
+
+                if (playerHP <= 0) {
+                    setTimeout(() => {
+                        messageText.setText('You got roasted!\n\nRefresh to try again...');
+                    }, 2000);
+                }
+            }, 1500);
+        }
+    </script>
+</body>
+</html>
